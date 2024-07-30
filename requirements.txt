@@ -11,3 +11,7 @@ kagglehub
 kaggle
 requests
 bs4
+chromadb
+pinecone-client
+torch
+torchvision
