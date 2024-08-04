@@ -3,57 +3,60 @@ import multiprocessing
 from gensim.models import KeyedVectors
 from transformers import BertTokenizer, TFBertModel
 import pandas as pd
-from joblib import Parallel, delayed
 
-num_cores = multiprocessing.cpu_count()
-print(f"Número de núcleos disponibles: {num_cores}")
+dataframe_wine = pd.read_csv('week10/data/winemag-data_first150k.csv')
+text_corpus = dataframe_wine['description']
 
-# Cargar el dataset
-wine_df = pd.read_csv('/Users/pabloarcos/Documents/EPN/7 SEMESTRE/RI/ir24a/week10/data/winemag-data_first150k.csv')
-corpus = wine_df['description'].tolist()
-
-# Ruta al modelo Word2Vec preentrenado
-model_path = '/Users/pabloarcos/Documents/EPN/7 SEMESTRE/RI/ir24a/week10/data/GoogleNews-vectors-negative300.bin.gz'
+path_to_model = 'data/GoogleNews-vectors-negative300.bin.gz'
 
 # Cargar el modelo Word2Vec preentrenado
-word2vec_model = KeyedVectors.load_word2vec_format(model_path, binary=True)
+vector_model = KeyedVectors.load_word2vec_format(path_to_model, binary=True)
 
-# Cargar el modelo y tokenizador BERT preentrenado
-tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+# Load pre-trained BERT model and tokenizer
+text_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+bert_model = TFBertModel.from_pretrained('bert-base-uncased')
 
-# Definir funciones para calcular embeddings
-def calculate_word2vec_embeddings(text):
+# Definir la función calculate_embeddings globalmente
+def compute_word2vec_embeddings(text):
     tokens = text.lower().split()
-    word_vectors = [word2vec_model[word] for word in tokens if word in word2vec_model]
-    if word_vectors:
-        return np.mean(word_vectors, axis=0)
+    vectors = [vector_model[word] for word in tokens if word in vector_model]
+    if vectors:
+        return np.mean(vectors, axis=0)
     else:
-        return np.zeros(word2vec_model.vector_size)
+        return np.zeros(vector_model.vector_size)
 
-def generate_word2vec_embeddings(texts, n_jobs=6):
-    return np.array(Parallel(n_jobs=n_jobs)(delayed(calculate_word2vec_embeddings)(text) for text in texts))
+def generate_word2vec_embeddings(texts):
+    # Crear un pool de procesos
+    process_pool = multiprocessing.Pool()
 
-def calculate_bert_embeddings(text):
-    # Inicializar el modelo y tokenizador dentro de la función
-    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-    model = TFBertModel.from_pretrained('bert-base-uncased')
-    
-    inputs = tokenizer(text, return_tensors='tf', padding=True, truncation=True)
-    outputs = model(**inputs)
+    # Calcular los embeddings para cada texto en paralelo usando map
+    embeddings = process_pool.map(compute_word2vec_embeddings, texts)
+
+    # Cerrar el pool y esperar a que todos los procesos terminen
+    process_pool.close()
+    process_pool.join()
+
+    return np.array(embeddings)
+
+def compute_bert_embeddings(text):
+    inputs = text_tokenizer(text, return_tensors='tf', padding=True, truncation=True)
+    outputs = bert_model(**inputs)
     return outputs.last_hidden_state[:, 0, :].numpy()
 
-def generate_bert_embeddings(texts, n_jobs=6):
-    return np.array(Parallel(n_jobs=n_jobs)(delayed(calculate_bert_embeddings)(text) for text in texts))
+def generate_bert_embeddings(texts):
+    # Usar multiprocessing para calcular embeddings en paralelo
+    with multiprocessing.Pool(processes=4) as process_pool:
+        embeddings = process_pool.map(compute_bert_embeddings, texts)
+    return np.array(embeddings)
 
-# Reduzca el tamaño del corpus para pruebas iniciales
-corpus_sample = corpus[:10]
 
-# Ejemplo de uso: Generar Word2Vec embeddings
-word2vec_embeddings = generate_word2vec_embeddings(corpus_sample, n_jobs=6)
-print("Word2Vec Embeddings:", word2vec_embeddings)
-print("Word2Vec Shape:", word2vec_embeddings.shape)
+if __name__ == "__main__":
+    # Ejemplo de uso: text_corpus es tu lista de textos
+    word2vec_embeddings = generate_word2vec_embeddings(text_corpus)
+    print("Word2Vec Embeddings:", word2vec_embeddings)
+    print("Word2Vec Shape:", word2vec_embeddings.shape)
 
-# Ejemplo de uso: Generar BERT embeddings
-bert_embeddings = generate_bert_embeddings(corpus_sample, n_jobs=6)
-print("BERT Embeddings:", bert_embeddings)
-print("BERT Embeddings Shape:", bert_embeddings.shape)
+    # Ejemplo de uso
+    bert_embeddings = generate_bert_embeddings(text_corpus)
+    print("BERT Embeddings:", bert_embeddings)
+    print("BERT Embeddings Shape:", bert_embeddings.shape)
